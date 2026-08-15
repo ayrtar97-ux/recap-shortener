@@ -1,0 +1,9 @@
+{
+  "name": "recap-shortener",
+  "version": "1.0.0",
+  "description": "Turns a long movie recap video into a short viral clip using Gemini + ffmpeg",
+  "main": "recap-to-short.js",
+  "dependencies": {
+    "@google/genai": "^1.0.0"
+  }
+}
