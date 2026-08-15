@@ -3,8 +3,8 @@ name: Shorten Recap Video
 on:
   workflow_dispatch:
     inputs:
-      youtube_url:
-        description: "YouTube URL of the recap video (e.g. https://www.youtube.com/watch?v=xxxxxxxxxxx)"
+      drive_file_id:
+        description: "Google Drive file ID of the recap video (the long code in the share link, e.g. 1USOn6j0dBG14hWNvUB811B21SqKt_eFn)"
         required: true
 
 jobs:
@@ -26,11 +26,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Install yt-dlp
-        run: pip install --break-system-packages -U yt-dlp
+      - name: Install gdown
+        run: pip install --break-system-packages -U gdown
 
-      - name: Download input video from YouTube
-        run: yt-dlp -f "bv*[height<=720]+ba/b[height<=720]" --merge-output-format mp4 -o input.mp4 "${{ github.event.inputs.youtube_url }}"
+      - name: Download input video from Google Drive
+        run: gdown "${{ github.event.inputs.drive_file_id }}" -O input.mp4
 
       - name: Verify downloaded video
         run: |
