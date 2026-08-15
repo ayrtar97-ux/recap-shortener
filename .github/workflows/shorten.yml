@@ -1,0 +1,43 @@
+name: Shorten Recap Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Direct download URL of the recap video (.mp4)"
+        required: true
+
+jobs:
+  shorten:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Download input video
+        run: curl -L "${{ github.event.inputs.video_url }}" -o input.mp4
+
+      - name: Run recap shortener
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: node recap-to-short.js input.mp4 output.mp4
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: short-video
+          path: output.mp4
+
+
