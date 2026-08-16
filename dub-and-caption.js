@@ -103,7 +103,7 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
 
   const result = await withRetry(() =>
     ai.models.generateContent({
-      model: "gemini-2.5-flash-lite",
+      model: "gemini-3.5-flash-lite",
       contents: [
         {
           role: "user",
