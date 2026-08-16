@@ -32,6 +32,9 @@ jobs:
       - name: Install gdown
         run: pip install --break-system-packages -U gdown
 
+      - name: Install edge-tts
+        run: pip install --break-system-packages -U edge-tts
+
       - name: Download input video from Google Drive
         run: gdown "${{ github.event.inputs.drive_file_id }}" -O input.mp4
 
@@ -48,8 +51,7 @@ jobs:
       - name: Dub with Burmese AI voice + burn subtitles + remove watermark + mirror
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+          EDGE_TTS_VOICE: my-MM-ThihaNeural
         run: node dub-and-caption.js output.mp4 final_output.mp4
 
       - name: Upload result
@@ -57,4 +59,3 @@ jobs:
         with:
           name: final-video
           path: final_output.mp4
-
