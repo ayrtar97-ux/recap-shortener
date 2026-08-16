@@ -77,7 +77,8 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
     ],
     config: {
       responseMimeType: "application/json",
-      maxOutputTokens: 2048,
+      maxOutputTokens: 8192,
+      thinkingConfig: { thinkingBudget: 1024 },
     },
   });
 
@@ -97,8 +98,13 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   try {
     segments = JSON.parse(rawText);
   } catch (e) {
-    console.error("Failed to parse Gemini response as JSON:\n", rawText);
-    throw e;
+    console.error("Strict JSON.parse failed, attempting recovery from truncated output...");
+    segments = recoverJsonArray(rawText);
+    if (!segments || segments.length === 0) {
+      console.error("Recovery failed. Raw text was:\n", rawText);
+      throw e;
+    }
+    console.warn(`Recovered ${segments.length} complete segment(s) from truncated response.`);
   }
   console.log("Selected segments:", segments);
 
@@ -136,6 +142,34 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
 function toSeconds(mmss) {
   const [m, s] = mmss.split(":").map(Number);
   return m * 60 + s;
+}
+
+// Recovers as many complete {...} objects as possible from a truncated JSON
+// array string like '[{"a":1},{"b":2},{"c":' by scanning brace depth and
+// dropping the last, incomplete object.
+function recoverJsonArray(rawText) {
+  const objects = [];
+  let depth = 0;
+  let startIdx = -1;
+  for (let i = 0; i < rawText.length; i++) {
+    const ch = rawText[i];
+    if (ch === "{") {
+      if (depth === 0) startIdx = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && startIdx !== -1) {
+        const candidate = rawText.slice(startIdx, i + 1);
+        try {
+          objects.push(JSON.parse(candidate));
+        } catch (_) {
+          // skip malformed object
+        }
+        startIdx = -1;
+      }
+    }
+  }
+  return objects;
 }
 
 main().catch((err) => {
