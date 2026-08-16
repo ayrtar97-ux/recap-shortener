@@ -1,0 +1,262 @@
+/**
+ * dub-and-caption.js
+ * Input: short_video.mp4 (already-cut viral short, from recap-to-short.js)
+ * Output: final_output.mp4
+ *   - watermark removed
+ *   - mirror flipped
+ *   - converted to 9:16 vertical (TikTok/Shorts format) with blurred background padding
+ *   - original audio replaced with Burmese AI voice narration
+ *   - Burmese/English dual-language subtitles burned in
+ *
+ * Requirements:
+ *   npm install @google/genai
+ *   ffmpeg + ffprobe installed
+ *   Noto Sans Myanmar font installed on the system (for subtitle rendering)
+ *
+ * Env vars required:
+ *   GEMINI_API_KEY
+ *   ELEVENLABS_API_KEY
+ *   ELEVENLABS_VOICE_ID   (a Burmese-capable voice id from your ElevenLabs account)
+ *
+ * Usage:
+ *   node dub-and-caption.js short_video.mp4 final_output.mp4
+ *
+ * NOTE ON WATERMARK COORDINATES:
+ *   The delogo box below (x=1000,y=580,w=280,h=50 for a 1280x720 video) was
+ *   estimated from sample frames. If the watermark isn't fully covered or
+ *   too much picture is blurred, adjust WATERMARK_BOX below and re-run.
+ */
+
+const { GoogleGenAI } = require("@google/genai");
+const { execSync } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+
+const [, , INPUT_PATH, OUTPUT_PATH = "final_output.mp4"] = process.argv;
+if (!INPUT_PATH) {
+  console.error("Usage: node dub-and-caption.js <short_video.mp4> [final_output.mp4]");
+  process.exit(1);
+}
+
+// Adjust this box to match where the watermark actually sits on your video.
+// x,y = top-left corner; w,h = width/height of the box to blend out.
+const WATERMARK_BOX = { x: 1000, y: 580, w: 280, h: 50 };
+
+const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+
+async function main() {
+  const tmpDir = fs.mkdtempSync("/tmp/dub-");
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+  // ---- 1. Upload video to Gemini and get a narration script with timing ----
+  console.log("Uploading video to Gemini...");
+  const uploaded = await ai.files.upload({
+    file: INPUT_PATH,
+    config: { mimeType: "video/mp4" },
+  });
+  let file = await ai.files.get({ name: uploaded.name });
+  while (file.state === "PROCESSING") {
+    process.stdout.write(".");
+    await new Promise((r) => setTimeout(r, 3000));
+    file = await ai.files.get({ name: uploaded.name });
+  }
+  if (file.state === "FAILED") throw new Error("Gemini file processing failed.");
+  console.log("\nGenerating Burmese narration script...");
+
+  const prompt = `
+This is a short recap-style video with no usable dialogue audio (it will be replaced).
+Watch the video and write a natural Burmese voice-over narration that describes and dramatizes
+what's happening on screen, suitable for a viral short-form recap video.
+
+Rules:
+- Break the narration into short cues of 2-6 seconds each, covering almost the entire video duration.
+- Cues must be in chronological order and must not overlap.
+- "burmese" must be natural, spoken, conversational Burmese (not overly literal/formal), suitable for narration.
+- "english" must be a natural English translation of the same line (not word-for-word, natural phrasing).
+- Timestamps in MM:SS format, relative to this video.
+
+Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
+[{"start":"MM:SS","end":"MM:SS","burmese":"...","english":"..."}]
+`.trim();
+
+  const result = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { fileData: { fileUri: file.uri, mimeType: file.mimeType } },
+          { text: prompt },
+        ],
+      },
+    ],
+  });
+
+  const rawText = result.text.trim().replace(/^```json|```$/g, "").trim();
+  let cues;
+  try {
+    cues = JSON.parse(rawText);
+  } catch (e) {
+    console.error("Failed to parse Gemini response as JSON:\n", rawText);
+    throw e;
+  }
+  console.log(`Got ${cues.length} narration cues.`);
+  fs.writeFileSync(path.join(tmpDir, "cues.json"), JSON.stringify(cues, null, 2));
+
+  // ---- 2. Generate Burmese TTS audio per cue, time-stretched to fit its slot ----
+  console.log("Generating Burmese voice-over with ElevenLabs...");
+  const audioClips = []; // { path, startSeconds, durationSeconds }
+
+  for (let i = 0; i < cues.length; i++) {
+    const cue = cues[i];
+    const startSec = toSeconds(cue.start);
+    const endSec = toSeconds(cue.end);
+    const slotDuration = Math.max(0.5, endSec - startSec);
+
+    const rawMp3 = path.join(tmpDir, `voice_raw_${i}.mp3`);
+    await elevenLabsTTS(cue.burmese, rawMp3);
+
+    const rawDuration = getDuration(rawMp3);
+    const fittedWav = path.join(tmpDir, `voice_fit_${i}.wav`);
+    fitAudioToSlot(rawMp3, rawDuration, slotDuration, fittedWav);
+
+    audioClips.push({ path: fittedWav, startSeconds: startSec });
+    process.stdout.write(".");
+  }
+  console.log("\nVoice-over generation done.");
+
+  // ---- 3. Build the full narration track (silence + each clip placed at its start time) ----
+  const videoDuration = getDuration(INPUT_PATH);
+  const narrationTrack = path.join(tmpDir, "narration.wav");
+  buildNarrationTrack(audioClips, videoDuration, narrationTrack, tmpDir);
+
+  // ---- 4. Build subtitle file (Burmese + English, two lines per cue) ----
+  const srtPath = path.join(tmpDir, "captions.srt");
+  buildSrt(cues, srtPath);
+
+  // ---- 5. Final ffmpeg pass: delogo watermark, mirror flip, vertical TikTok format,
+  //         burn subtitles, mux new audio ----
+  console.log("Rendering final video (delogo + mirror + 9:16 vertical + subtitles + dub)...");
+  const { x, y, w, h } = WATERMARK_BOX;
+  const escapedSrt = srtPath.replace(/:/g, "\\:");
+  const subtitleStyle =
+    "FontName=Noto Sans Myanmar,FontSize=26,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=3,Alignment=2,MarginV=90";
+
+  const filterComplex = [
+    // remove watermark, then mirror the whole frame
+    `[0:v]delogo=x=${x}:y=${y}:w=${w}:h=${h}:show=0,hflip[clean]`,
+    // duplicate: one copy becomes a blurred, cropped-to-fill background;
+    // the other stays full-frame and sits on top, centered
+    `[clean]split=2[bgsrc][fgsrc]`,
+    `[bgsrc]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:8[bg]`,
+    `[fgsrc]scale=1080:-2[fg]`,
+    `[bg][fg]overlay=(W-w)/2:(H-h)/2[stacked]`,
+    // burn subtitles on the final 1080x1920 canvas
+    `[stacked]subtitles='${escapedSrt}':force_style='${subtitleStyle}'[v]`,
+  ].join(";");
+
+  execSync(
+    `ffmpeg -y -i "${INPUT_PATH}" -i "${narrationTrack}" ` +
+      `-filter_complex "${filterComplex}" ` +
+      `-map "[v]" -map 1:a ` +
+      `-c:v libx264 -crf 20 -preset veryfast -c:a aac -shortest "${OUTPUT_PATH}"`,
+    { stdio: "inherit" }
+  );
+
+  console.log(`\nDone. Final 9:16 dubbed + captioned video: ${OUTPUT_PATH}`);
+}
+
+// ---------- helpers ----------
+
+function toSeconds(mmss) {
+  const [m, s] = mmss.split(":").map(Number);
+  return m * 60 + s;
+}
+
+function srtTimestamp(totalSeconds) {
+  const h = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
+  const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
+  const s = String(Math.floor(totalSeconds % 60)).padStart(2, "0");
+  const ms = String(Math.round((totalSeconds % 1) * 1000)).padStart(3, "0");
+  return `${h}:${m}:${s},${ms}`;
+}
+
+function getDuration(filePath) {
+  const out = execSync(
+    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`
+  )
+    .toString()
+    .trim();
+  return parseFloat(out);
+}
+
+async function elevenLabsTTS(text, outPath) {
+  const res = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text,
+        model_id: "eleven_multilingual_v2",
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      }),
+    }
+  );
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`ElevenLabs TTS failed: ${res.status} ${errText}`);
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  fs.writeFileSync(outPath, buf);
+}
+
+function fitAudioToSlot(inputPath, rawDuration, slotDuration, outPath) {
+  // atempo only supports 0.5x-2x per filter instance; clamp to that range.
+  let factor = rawDuration / slotDuration;
+  factor = Math.max(0.5, Math.min(2.0, factor));
+  execSync(
+    `ffmpeg -y -i "${inputPath}" -filter:a "atempo=${factor.toFixed(3)}" -ar 44100 -ac 2 "${outPath}"`,
+    { stdio: "ignore" }
+  );
+}
+
+function buildNarrationTrack(clips, totalDuration, outPath, tmpDir) {
+  // Build a silent base, then overlay each clip at its start offset using adelay + amix.
+  const inputs = clips.map((c) => `-i "${c.path}"`).join(" ");
+  const delayFilters = clips
+    .map(
+      (c, i) =>
+        `[${i}:a]adelay=${Math.round(c.startSeconds * 1000)}|${Math.round(
+          c.startSeconds * 1000
+        )}[a${i}]`
+    )
+    .join(";");
+  const mixInputs = clips.map((_, i) => `[a${i}]`).join("");
+  const filterComplex = `${delayFilters};${mixInputs}amix=inputs=${clips.length}:duration=longest:dropout_transition=0[aout]`;
+
+  execSync(
+    `ffmpeg -y ${inputs} -filter_complex "${filterComplex}" -map "[aout]" -t ${totalDuration} "${outPath}"`,
+    { stdio: "inherit" }
+  );
+}
+
+function buildSrt(cues, outPath) {
+  const lines = cues
+    .map((cue, i) => {
+      const start = srtTimestamp(toSeconds(cue.start));
+      const end = srtTimestamp(toSeconds(cue.end));
+      return `${i + 1}\n${start} --> ${end}\n${cue.burmese}\n${cue.english}\n`;
+    })
+    .join("\n");
+  fs.writeFileSync(outPath, lines, "utf8");
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
