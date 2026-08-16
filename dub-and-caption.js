@@ -91,9 +91,24 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
         ],
       },
     ],
+    config: {
+      responseMimeType: "application/json",
+      maxOutputTokens: 4096,
+    },
   });
 
-  const rawText = result.text.trim().replace(/^```json|```$/g, "").trim();
+  const responseText = result.text;
+  if (!responseText) {
+    console.error("Gemini returned no text. Full response:");
+    console.error(JSON.stringify(result, null, 2));
+    const candidate = result.candidates && result.candidates[0];
+    const finishReason = candidate && candidate.finishReason;
+    throw new Error(
+      `Gemini returned empty text (finishReason: ${finishReason || "unknown"}). See logged response above.`
+    );
+  }
+
+  const rawText = responseText.trim().replace(/^```json|```$/g, "").trim();
   let cues;
   try {
     cues = JSON.parse(rawText);
