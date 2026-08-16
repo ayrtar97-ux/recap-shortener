@@ -26,6 +26,25 @@ if (!INPUT_PATH) {
 const TARGET_MIN_SECONDS = 180; // 3 min
 const TARGET_MAX_SECONDS = 300; // 5 min
 
+// Retries a Gemini call on transient errors (503 overloaded, 429 rate-limited)
+// with exponential backoff. Does not retry on other errors (e.g. bad request).
+async function withRetry(fn, { retries = 5, baseDelayMs = 5000 } = {}) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = err && (err.status || (err.error && err.error.code));
+      const isTransient = status === 503 || status === 429;
+      if (!isTransient || attempt === retries) throw err;
+      const delay = baseDelayMs * Math.pow(2, attempt - 1);
+      console.warn(
+        `Gemini call failed (status ${status}), retrying in ${delay / 1000}s... (attempt ${attempt}/${retries})`
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
 async function main() {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -64,23 +83,25 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
 [{"start":"MM:SS","end":"MM:SS","reason":"short reason"}]
 `.trim();
 
-  const result = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { fileData: { fileUri: file.uri, mimeType: file.mimeType } },
-          { text: prompt },
-        ],
+  const result = await withRetry(() =>
+    ai.models.generateContent({
+      model: "gemini-2.5-flash-lite",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { fileData: { fileUri: file.uri, mimeType: file.mimeType } },
+            { text: prompt },
+          ],
+        },
+      ],
+      config: {
+        responseMimeType: "application/json",
+        maxOutputTokens: 8192,
+        thinkingConfig: { thinkingBudget: 1024 },
       },
-    ],
-    config: {
-      responseMimeType: "application/json",
-      maxOutputTokens: 8192,
-      thinkingConfig: { thinkingBudget: 1024 },
-    },
-  });
+    })
+  );
 
   const responseText = result.text;
   if (!responseText) {
