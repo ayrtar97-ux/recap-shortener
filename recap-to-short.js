@@ -72,15 +72,27 @@ This is a movie recap video. Select the ${Math.round(
   )}-${Math.round(
     TARGET_MAX_SECONDS / 60
   )} minutes worth of the MOST viral, attention-grabbing, emotionally intense, or plot-twist moments.
+
 Rules:
-- Return 3 to 6 non-overlapping segments, in chronological order.
+- Return 4 to 7 non-overlapping segments.
 - Each segment should be a natural clip (don't cut mid-sentence if avoidable).
 - Total combined duration must be between ${TARGET_MIN_SECONDS} and ${TARGET_MAX_SECONDS} seconds.
 - Prioritize: shocking reveals, action peaks, emotional climax, cliffhangers, funniest/most quotable lines.
 - Timestamps must use MM:SS format relative to this video.
 
+HOOK REQUIREMENT (critical for virality):
+- The FIRST segment in your returned list must be the single most scroll-stopping,
+  jaw-dropping, or intriguing 3-6 seconds in the entire video — something that makes
+  someone stop scrolling within the first 2 seconds (a shocking visual, a scream, a
+  gunshot, a huge reveal, a dramatic slap, an explosion, etc).
+- This hook segment does NOT need to be from the actual start of the movie
+  chronologically — pick it from anywhere. It will be played first, and the
+  remaining segments will follow in their normal chronological order after it.
+- If the true chronological opening is already the strongest hook, it's fine to
+  keep it first — but actively consider later/climactic moments as the hook too.
+
 Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
-[{"start":"MM:SS","end":"MM:SS","reason":"short reason"}]
+[{"start":"MM:SS","end":"MM:SS","reason":"short reason","is_hook":true|false}]
 `.trim();
 
   const result = await withRetry(() =>
