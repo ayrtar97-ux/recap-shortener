@@ -6,7 +6,9 @@
  *   - mirror flipped
  *   - converted to 9:16 vertical (TikTok/Shorts format) with blurred background padding
  *   - original audio replaced with Burmese AI voice narration (via edge-tts, free, no quota)
- *   - Burmese/English dual-language subtitles burned in
+ *   - bold, viral-style Burmese/English dual-language subtitles burned in
+ *   - opening line written as a scroll-stopping hook
+ *   - optional background music bed, quietly mixed under the narration
  *
  * Requirements:
  *   npm install @google/genai
@@ -20,6 +22,8 @@
  * Optional env vars:
  *   EDGE_TTS_VOICE  (default: my-MM-ThihaNeural — male Burmese voice.
  *                    use my-MM-NilarNeural for a female voice)
+ *   BG_MUSIC_PATH   (path to a royalty-free mp3/wav to use as background music;
+ *                    skipped entirely if unset or the file doesn't exist)
  *
  * Usage:
  *   node dub-and-caption.js short_video.mp4 final_output.mp4
@@ -46,6 +50,10 @@ if (!INPUT_PATH) {
 const WATERMARK_BOX = { x: 980, y: 570, w: 290, h: 60 };
 
 const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || "my-MM-ThihaNeural";
+// Optional: path to a royalty-free background music file (mp3/wav). If set and
+// the file exists, it's looped, trimmed to video length, and mixed in quietly
+// under the narration. Leave unset to skip background music entirely.
+const BG_MUSIC_PATH = process.env.BG_MUSIC_PATH || null;
 
 // Retries a Gemini call on transient errors (503 overloaded, 429 rate-limited)
 // with exponential backoff. Does not retry on other errors (e.g. bad request).
@@ -96,6 +104,15 @@ Rules:
 - "burmese" must be natural, spoken, conversational Burmese (not overly literal/formal), suitable for narration.
 - "english" must be a natural English translation of the same line (not word-for-word, natural phrasing).
 - Timestamps in MM:SS format, relative to this video.
+
+HOOK REQUIREMENT (critical for virality):
+- The very first cue (covering roughly the first 2-4 seconds) must be a punchy,
+  scroll-stopping hook line — a rhetorical question, a bold claim, or a dramatic
+  exclamation that matches the shocking visual on screen at that moment.
+  Examples of hook energy (write your own, don't reuse these verbatim):
+  "You won't believe what happens next..." / "This one decision destroys everything." /
+  "Watch what they find inside." Keep it short and punchy, not a full explanation.
+- After the hook line, continue with natural descriptive narration for the rest.
 
 Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
 [{"start":"MM:SS","end":"MM:SS","burmese":"...","english":"..."}]
@@ -175,6 +192,16 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   const narrationTrack = path.join(tmpDir, "narration.wav");
   buildNarrationTrack(audioClips, videoDuration, narrationTrack, tmpDir);
 
+  // ---- 3b. Optionally mix in background music, ducked quietly under the narration ----
+  let finalAudioTrack = narrationTrack;
+  if (BG_MUSIC_PATH && fs.existsSync(BG_MUSIC_PATH)) {
+    console.log(`Mixing in background music from ${BG_MUSIC_PATH}...`);
+    finalAudioTrack = path.join(tmpDir, "narration_with_music.wav");
+    mixBackgroundMusic(narrationTrack, BG_MUSIC_PATH, videoDuration, finalAudioTrack);
+  } else {
+    console.log("No background music file found (set BG_MUSIC_PATH to enable). Skipping music.");
+  }
+
   // ---- 4. Build subtitle file (Burmese + English, two lines per cue) ----
   const srtPath = path.join(tmpDir, "captions.srt");
   buildSrt(cues, srtPath);
@@ -186,7 +213,7 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   const { x, y, w, h } = clampBoxToFrame(WATERMARK_BOX, vidW, vidH);
   const escapedSrt = srtPath.replace(/:/g, "\\:");
   const subtitleStyle =
-    "FontName=Noto Sans Myanmar,FontSize=26,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=3,Alignment=2,MarginV=90";
+    "FontName=Noto Sans Myanmar,FontSize=32,Bold=1,PrimaryColour=&H00FFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=4,Shadow=1,Alignment=2,MarginV=100,PlayResX=1080,PlayResY=1920";
 
   const filterComplex = [
     // remove watermark, then mirror the whole frame
@@ -202,7 +229,7 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   ].join(";");
 
   execSync(
-    `ffmpeg -y -i "${INPUT_PATH}" -i "${narrationTrack}" ` +
+    `ffmpeg -y -i "${INPUT_PATH}" -i "${finalAudioTrack}" ` +
       `-filter_complex "${filterComplex}" ` +
       `-map "[v]" -map 1:a ` +
       `-c:v libx264 -crf 20 -preset veryfast -c:a aac -shortest "${OUTPUT_PATH}"`,
@@ -298,6 +325,18 @@ function buildNarrationTrack(clips, totalDuration, outPath, tmpDir) {
 
   execSync(
     `ffmpeg -y ${inputs} -filter_complex "${filterComplex}" -map "[aout]" -t ${totalDuration} "${outPath}"`,
+    { stdio: "inherit" }
+  );
+}
+
+// Loops/trims a music file to match video length and mixes it in quietly
+// (relative to the already-normal-volume narration track) so it sits as a
+// bed under the voice-over rather than competing with it.
+function mixBackgroundMusic(narrationPath, musicPath, totalDuration, outPath) {
+  execSync(
+    `ffmpeg -y -i "${narrationPath}" -stream_loop -1 -i "${musicPath}" ` +
+      `-filter_complex "[1:a]volume=0.15,atrim=0:${totalDuration}[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=0[aout]" ` +
+      `-map "[aout]" -t ${totalDuration} "${outPath}"`,
     { stdio: "inherit" }
   );
 }
