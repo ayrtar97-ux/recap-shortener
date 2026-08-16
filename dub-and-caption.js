@@ -5,18 +5,21 @@
  *   - watermark removed
  *   - mirror flipped
  *   - converted to 9:16 vertical (TikTok/Shorts format) with blurred background padding
- *   - original audio replaced with Burmese AI voice narration
+ *   - original audio replaced with Burmese AI voice narration (via edge-tts, free, no quota)
  *   - Burmese/English dual-language subtitles burned in
  *
  * Requirements:
  *   npm install @google/genai
  *   ffmpeg + ffprobe installed
  *   Noto Sans Myanmar font installed on the system (for subtitle rendering)
+ *   edge-tts installed (pip install edge-tts) — free, no API key needed
  *
  * Env vars required:
  *   GEMINI_API_KEY
- *   ELEVENLABS_API_KEY
- *   ELEVENLABS_VOICE_ID   (a Burmese-capable voice id from your ElevenLabs account)
+ *
+ * Optional env vars:
+ *   EDGE_TTS_VOICE  (default: my-MM-ThihaNeural — male Burmese voice.
+ *                    use my-MM-NilarNeural for a female voice)
  *
  * Usage:
  *   node dub-and-caption.js short_video.mp4 final_output.mp4
@@ -28,7 +31,7 @@
  */
 
 const { GoogleGenAI } = require("@google/genai");
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
@@ -42,8 +45,7 @@ if (!INPUT_PATH) {
 // x,y = top-left corner; w,h = width/height of the box to blend out.
 const WATERMARK_BOX = { x: 1000, y: 580, w: 280, h: 50 };
 
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || "my-MM-ThihaNeural";
 
 async function main() {
   const tmpDir = fs.mkdtempSync("/tmp/dub-");
@@ -81,7 +83,7 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
 `.trim();
 
   const result = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-2.5-flash-lite",
     contents: [
       {
         role: "user",
@@ -126,7 +128,7 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   fs.writeFileSync(path.join(tmpDir, "cues.json"), JSON.stringify(cues, null, 2));
 
   // ---- 2. Generate Burmese TTS audio per cue, time-stretched to fit its slot ----
-  console.log("Generating Burmese voice-over with ElevenLabs...");
+  console.log(`Generating Burmese voice-over with edge-tts (voice: ${EDGE_TTS_VOICE})...`);
   const audioClips = []; // { path, startSeconds, durationSeconds }
 
   for (let i = 0; i < cues.length; i++) {
@@ -136,7 +138,7 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
     const slotDuration = Math.max(0.5, endSec - startSec);
 
     const rawMp3 = path.join(tmpDir, `voice_raw_${i}.mp3`);
-    await elevenLabsTTS(cue.burmese, rawMp3);
+    edgeTTS(cue.burmese, rawMp3);
 
     const rawDuration = getDuration(rawMp3);
     const fittedWav = path.join(tmpDir, `voice_fit_${i}.wav`);
@@ -212,28 +214,16 @@ function getDuration(filePath) {
   return parseFloat(out);
 }
 
-async function elevenLabsTTS(text, outPath) {
-  const res = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
-    {
-      method: "POST",
-      headers: {
-        "xi-api-key": ELEVENLABS_API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text,
-        model_id: "eleven_multilingual_v2",
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
-      }),
-    }
+function edgeTTS(text, outPath) {
+  // Write text to a temp file to avoid shell-escaping issues with Burmese
+  // Unicode text and punctuation, then let edge-tts read it with --file.
+  const textFile = outPath + ".txt";
+  fs.writeFileSync(textFile, text, "utf8");
+  execFileSync(
+    "edge-tts",
+    ["--voice", EDGE_TTS_VOICE, "--file", textFile, "--write-media", outPath],
+    { stdio: "ignore" }
   );
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`ElevenLabs TTS failed: ${res.status} ${errText}`);
-  }
-  const buf = Buffer.from(await res.arrayBuffer());
-  fs.writeFileSync(outPath, buf);
 }
 
 function fitAudioToSlot(inputPath, rawDuration, slotDuration, outPath) {
