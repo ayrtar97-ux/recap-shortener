@@ -43,7 +43,7 @@ if (!INPUT_PATH) {
 
 // Adjust this box to match where the watermark actually sits on your video.
 // x,y = top-left corner; w,h = width/height of the box to blend out.
-const WATERMARK_BOX = { x: 1000, y: 580, w: 280, h: 50 };
+const WATERMARK_BOX = { x: 980, y: 570, w: 290, h: 60 };
 
 const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || "my-MM-ThihaNeural";
 
@@ -182,7 +182,8 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   // ---- 5. Final ffmpeg pass: delogo watermark, mirror flip, vertical TikTok format,
   //         burn subtitles, mux new audio ----
   console.log("Rendering final video (delogo + mirror + 9:16 vertical + subtitles + dub)...");
-  const { x, y, w, h } = WATERMARK_BOX;
+  const { width: vidW, height: vidH } = getDimensions(INPUT_PATH);
+  const { x, y, w, h } = clampBoxToFrame(WATERMARK_BOX, vidW, vidH);
   const escapedSrt = srtPath.replace(/:/g, "\\:");
   const subtitleStyle =
     "FontName=Noto Sans Myanmar,FontSize=26,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=3,Alignment=2,MarginV=90";
@@ -233,6 +234,30 @@ function getDuration(filePath) {
     .toString()
     .trim();
   return parseFloat(out);
+}
+
+function getDimensions(filePath) {
+  const out = execSync(
+    `ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${filePath}"`
+  )
+    .toString()
+    .trim();
+  const [width, height] = out.split("x").map(Number);
+  return { width, height };
+}
+
+// Ensures the delogo box has at least a 2px margin from every frame edge,
+// scaling/shifting it down if needed. Prevents "Logo area is outside of the
+// frame" errors when the box (estimated for one resolution) is reused on a
+// differently-sized video, or sits exactly on the boundary.
+function clampBoxToFrame(box, frameW, frameH) {
+  const margin = 2;
+  let { x, y, w, h } = box;
+  w = Math.min(w, frameW - margin * 2);
+  h = Math.min(h, frameH - margin * 2);
+  x = Math.min(Math.max(x, 0), frameW - w - margin);
+  y = Math.min(Math.max(y, 0), frameH - h - margin);
+  return { x, y, w, h };
 }
 
 function edgeTTS(text, outPath) {
