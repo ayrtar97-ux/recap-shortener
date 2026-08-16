@@ -10,7 +10,7 @@ on:
 jobs:
   shorten:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -22,6 +22,9 @@ jobs:
 
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Myanmar font (for Burmese subtitles)
+        run: sudo apt-get install -y fonts-noto-core
 
       - name: Install dependencies
         run: npm install
@@ -42,8 +45,16 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: node recap-to-short.js input.mp4 output.mp4
 
+      - name: Dub with Burmese AI voice + burn subtitles + remove watermark + mirror
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+        run: node dub-and-caption.js output.mp4 final_output.mp4
+
       - name: Upload result
         uses: actions/upload-artifact@v4
         with:
-          name: short-video
-          path: output.mp4
+          name: final-video
+          path: final_output.mp4
+
