@@ -93,7 +93,8 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
     ],
     config: {
       responseMimeType: "application/json",
-      maxOutputTokens: 4096,
+      maxOutputTokens: 8192,
+      thinkingConfig: { thinkingBudget: 1024 },
     },
   });
 
@@ -113,8 +114,13 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   try {
     cues = JSON.parse(rawText);
   } catch (e) {
-    console.error("Failed to parse Gemini response as JSON:\n", rawText);
-    throw e;
+    console.error("Strict JSON.parse failed, attempting recovery from truncated output...");
+    cues = recoverJsonArray(rawText);
+    if (!cues || cues.length === 0) {
+      console.error("Recovery failed. Raw text was:\n", rawText);
+      throw e;
+    }
+    console.warn(`Recovered ${cues.length} complete cue(s) from truncated response.`);
   }
   console.log(`Got ${cues.length} narration cues.`);
   fs.writeFileSync(path.join(tmpDir, "cues.json"), JSON.stringify(cues, null, 2));
@@ -269,6 +275,34 @@ function buildSrt(cues, outPath) {
     })
     .join("\n");
   fs.writeFileSync(outPath, lines, "utf8");
+}
+
+// Recovers as many complete {...} objects as possible from a truncated JSON
+// array string like '[{"a":1},{"b":2},{"c":' by scanning brace depth and
+// dropping the last, incomplete object.
+function recoverJsonArray(rawText) {
+  const objects = [];
+  let depth = 0;
+  let startIdx = -1;
+  for (let i = 0; i < rawText.length; i++) {
+    const ch = rawText[i];
+    if (ch === "{") {
+      if (depth === 0) startIdx = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && startIdx !== -1) {
+        const candidate = rawText.slice(startIdx, i + 1);
+        try {
+          objects.push(JSON.parse(candidate));
+        } catch (_) {
+          // skip malformed object
+        }
+        startIdx = -1;
+      }
+    }
+  }
+  return objects;
 }
 
 main().catch((err) => {
