@@ -50,6 +50,9 @@ if (!INPUT_PATH) {
 const WATERMARK_BOX = { x: 980, y: 570, w: 290, h: 60 };
 
 const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || "my-MM-ThihaNeural";
+// Speeds up the base narration pace a bit for punchier, more viral-style delivery.
+// Format: "+15%" faster, "-10%" slower, "+0%" for edge-tts's natural default pace.
+const EDGE_TTS_RATE = process.env.EDGE_TTS_RATE || "+15%";
 // Optional: path to a royalty-free background music file (mp3/wav). If set and
 // the file exists, it's looped, trimmed to video length, and mixed in quietly
 // under the narration. Leave unset to skip background music entirely.
@@ -94,9 +97,11 @@ async function main() {
   console.log("\nGenerating Burmese narration script...");
 
   const prompt = `
-This is a short recap-style video with no usable dialogue audio (it will be replaced).
-Watch the video and write a natural Burmese voice-over narration that describes and dramatizes
-what's happening on screen, suitable for a viral short-form recap video.
+This is a short recap-style video made of several DISCONNECTED clips cut together from a
+longer movie — the scenes jump around and are NOT continuous. There is no usable dialogue
+audio (it will be replaced). Watch the video and write a natural Burmese voice-over
+narration that describes what's happening AND actively bridges the gaps between clips so
+the story feels connected rather than jumpy.
 
 Rules:
 - Break the narration into short cues of 2-6 seconds each, covering almost the entire video duration.
@@ -104,6 +109,17 @@ Rules:
 - "burmese" must be natural, spoken, conversational Burmese (not overly literal/formal), suitable for narration.
 - "english" must be a natural English translation of the same line (not word-for-word, natural phrasing).
 - Timestamps in MM:SS format, relative to this video.
+
+CONTINUITY REQUIREMENT (important — this is a recap made of disconnected clips):
+- Every time the scene jumps to a new moment, the first cue for that new clip must
+  include a brief connective/transitional phrase so the viewer isn't confused —
+  e.g. "Later that night...", "Back at the station...", "Meanwhile, across town...",
+  "Just when things seemed calm...". Don't just describe the new visual in isolation.
+- Keep references to characters and their relationships consistent across cues (use
+  the same name/role for the same person every time) so viewers can follow who's who
+  even though they're only seeing fragments of the story.
+- Briefly imply what connects this moment to the previous one (cause, consequence, or
+  time jump) rather than treating each clip as a standalone caption.
 
 HOOK REQUIREMENT (critical for virality):
 - The very first cue (covering roughly the first 2-4 seconds) must be a punchy,
@@ -213,7 +229,7 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   const { x, y, w, h } = clampBoxToFrame(WATERMARK_BOX, vidW, vidH);
   const escapedSrt = srtPath.replace(/:/g, "\\:");
   const subtitleStyle =
-    "FontName=Noto Sans Myanmar,FontSize=32,Bold=1,PrimaryColour=&H00FFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=4,Shadow=1,Alignment=2,MarginV=100,PlayResX=1080,PlayResY=1920";
+    "FontName=Arial,FontSize=34,Bold=1,PrimaryColour=&H00FFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=4,Shadow=1,Alignment=2,MarginV=320,PlayResX=1080,PlayResY=1920";
 
   const filterComplex = [
     // remove watermark, then mirror the whole frame
@@ -294,17 +310,26 @@ function edgeTTS(text, outPath) {
   fs.writeFileSync(textFile, text, "utf8");
   execFileSync(
     "edge-tts",
-    ["--voice", EDGE_TTS_VOICE, "--file", textFile, "--write-media", outPath],
+    [
+      "--voice", EDGE_TTS_VOICE,
+      "--rate", EDGE_TTS_RATE,
+      "--file", textFile,
+      "--write-media", outPath,
+    ],
     { stdio: "ignore" }
   );
 }
 
 function fitAudioToSlot(inputPath, rawDuration, slotDuration, outPath) {
-  // atempo only supports 0.5x-2x per filter instance; clamp to that range.
+  // Only speed up if the line runs longer than its slot — never artificially
+  // slow the voice down to fill extra time, since that sounds unnaturally
+  // draggy/slow. If the line is shorter than its slot, it just ends early
+  // and the next line's silence naturally fills the gap.
   let factor = rawDuration / slotDuration;
-  factor = Math.max(0.5, Math.min(2.0, factor));
+  factor = Math.max(1.0, Math.min(2.0, factor));
+  // Slightly lower the narration volume (was sounding too loud/harsh at full gain).
   execSync(
-    `ffmpeg -y -i "${inputPath}" -filter:a "atempo=${factor.toFixed(3)}" -ar 44100 -ac 2 "${outPath}"`,
+    `ffmpeg -y -i "${inputPath}" -filter:a "atempo=${factor.toFixed(3)},volume=0.8" -ar 44100 -ac 2 "${outPath}"`,
     { stdio: "ignore" }
   );
 }
@@ -346,7 +371,7 @@ function buildSrt(cues, outPath) {
     .map((cue, i) => {
       const start = srtTimestamp(toSeconds(cue.start));
       const end = srtTimestamp(toSeconds(cue.end));
-      return `${i + 1}\n${start} --> ${end}\n${cue.burmese}\n${cue.english}\n`;
+      return `${i + 1}\n${start} --> ${end}\n${cue.english}\n`;
     })
     .join("\n");
   fs.writeFileSync(outPath, lines, "utf8");
