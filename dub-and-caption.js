@@ -3,25 +3,24 @@
  * Input: short_video.mp4 (already-cut viral short, from recap-to-short.js)
  * Output: final_output.mp4
  *   - watermark removed
- *   - mirror flipped
  *   - converted to 9:16 vertical (TikTok/Shorts format) with blurred background padding
- *   - original audio replaced with Burmese AI voice narration (via edge-tts, free, no quota)
- *   - bold, viral-style Burmese/English dual-language subtitles burned in
+ *   - original audio replaced with an emotional English AI narration (via edge-tts, free, no quota)
+ *   - bold, viral-style English subtitles burned in
  *   - opening line written as a scroll-stopping hook
+ *   - "KK.Ent" logo watermark burned into the corner
  *   - optional background music bed, quietly mixed under the narration
  *
  * Requirements:
  *   npm install @google/genai
  *   ffmpeg + ffprobe installed
- *   Noto Sans Myanmar font installed on the system (for subtitle rendering)
  *   edge-tts installed (pip install edge-tts) — free, no API key needed
  *
  * Env vars required:
  *   GEMINI_API_KEY
  *
  * Optional env vars:
- *   EDGE_TTS_VOICE  (default: my-MM-ThihaNeural — male Burmese voice.
- *                    use my-MM-NilarNeural for a female voice)
+ *   EDGE_TTS_VOICE  (default: en-US-AvaNeural — expressive English voice.
+ *                    try en-US-GuyNeural or en-US-AndrewNeural for a male voice)
  *   BG_MUSIC_PATH   (path to a royalty-free mp3/wav to use as background music;
  *                    skipped entirely if unset or the file doesn't exist)
  *
@@ -49,7 +48,7 @@ if (!INPUT_PATH) {
 // x,y = top-left corner; w,h = width/height of the box to blend out.
 const WATERMARK_BOX = { x: 980, y: 570, w: 290, h: 60 };
 
-const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || "my-MM-ThihaNeural";
+const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || "en-US-AvaNeural";
 // Speeds up the base narration pace a bit for punchier, more viral-style delivery.
 // Format: "+15%" faster, "-10%" slower, "+0%" for edge-tts's natural default pace.
 const EDGE_TTS_RATE = process.env.EDGE_TTS_RATE || "+15%";
@@ -94,20 +93,22 @@ async function main() {
     file = await ai.files.get({ name: uploaded.name });
   }
   if (file.state === "FAILED") throw new Error("Gemini file processing failed.");
-  console.log("\nGenerating Burmese narration script...");
+  console.log("\nGenerating emotional English narration script...");
 
   const prompt = `
 This is a short recap-style video made of several DISCONNECTED clips cut together from a
 longer movie — the scenes jump around and are NOT continuous. There is no usable dialogue
-audio (it will be replaced). Watch the video and write a natural Burmese voice-over
-narration that describes what's happening AND actively bridges the gaps between clips so
-the story feels connected rather than jumpy.
+audio (it will be replaced). Watch the video and write a natural, EMOTIONAL English
+voice-over narration that describes what's happening AND actively bridges the gaps between
+clips so the story feels connected rather than jumpy.
 
 Rules:
 - Break the narration into short cues of 2-6 seconds each, covering almost the entire video duration.
 - Cues must be in chronological order and must not overlap.
-- "burmese" must be natural, spoken, conversational Burmese (not overly literal/formal), suitable for narration.
-- "english" must be a natural English translation of the same line (not word-for-word, natural phrasing).
+- "english" must be natural, spoken narration — NOT flat or robotic. Write it the way a
+  dramatic movie-trailer narrator would deliver it: charged with tension, urgency, awe, or
+  dread as the moment calls for. Use punctuation (short sentences, em-dashes, ellipses) that
+  implies the emotional delivery you want spoken.
 - Timestamps in MM:SS format, relative to this video.
 
 CONTINUITY REQUIREMENT (important — this is a recap made of disconnected clips):
@@ -131,7 +132,7 @@ HOOK REQUIREMENT (critical for virality):
 - After the hook line, continue with natural descriptive narration for the rest.
 
 Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
-[{"start":"MM:SS","end":"MM:SS","burmese":"...","english":"..."}]
+[{"start":"MM:SS","end":"MM:SS","english":"..."}]
 `.trim();
 
   const result = await withRetry(() =>
@@ -192,7 +193,7 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
     const slotDuration = Math.max(0.5, endSec - startSec);
 
     const rawMp3 = path.join(tmpDir, `voice_raw_${i}.mp3`);
-    edgeTTS(cue.burmese, rawMp3);
+    edgeTTS(cue.english, rawMp3);
 
     const rawDuration = getDuration(rawMp3);
     const fittedWav = path.join(tmpDir, `voice_fit_${i}.wav`);
@@ -222,26 +223,29 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   const srtPath = path.join(tmpDir, "captions.srt");
   buildSrt(cues, srtPath);
 
-  // ---- 5. Final ffmpeg pass: delogo watermark, mirror flip, vertical TikTok format,
-  //         burn subtitles, mux new audio ----
-  console.log("Rendering final video (delogo + mirror + 9:16 vertical + subtitles + dub)...");
+  // ---- 5. Final ffmpeg pass: delogo watermark, vertical TikTok format,
+  //         burn subtitles + logo, mux new audio ----
+  console.log("Rendering final video (delogo + 9:16 vertical + subtitles + logo + dub)...");
   const { width: vidW, height: vidH } = getDimensions(INPUT_PATH);
   const { x, y, w, h } = clampBoxToFrame(WATERMARK_BOX, vidW, vidH);
   const escapedSrt = srtPath.replace(/:/g, "\\:");
   const subtitleStyle =
     "FontName=Arial,FontSize=34,Bold=1,PrimaryColour=&H00FFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=4,Shadow=1,Alignment=2,MarginV=320,PlayResX=1080,PlayResY=1920";
+  const logoStyle =
+    "fontcolor=white:fontsize=40:box=1:boxcolor=black@0.35:boxborderw=14:x=30:y=50:font=Arial";
 
   const filterComplex = [
-    // remove watermark, then mirror the whole frame
-    `[0:v]delogo=x=${x}:y=${y}:w=${w}:h=${h}:show=0,hflip[clean]`,
+    // remove watermark (no mirror flip anymore)
+    `[0:v]delogo=x=${x}:y=${y}:w=${w}:h=${h}:show=0[clean]`,
     // duplicate: one copy becomes a blurred, cropped-to-fill background;
     // the other stays full-frame and sits on top, centered
     `[clean]split=2[bgsrc][fgsrc]`,
     `[bgsrc]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:8[bg]`,
     `[fgsrc]scale=1080:-2[fg]`,
     `[bg][fg]overlay=(W-w)/2:(H-h)/2[stacked]`,
-    // burn subtitles on the final 1080x1920 canvas
-    `[stacked]subtitles='${escapedSrt}':force_style='${subtitleStyle}'[v]`,
+    // burn subtitles, then the KK.Ent brand logo on top of everything
+    `[stacked]subtitles='${escapedSrt}':force_style='${subtitleStyle}'[captioned]`,
+    `[captioned]drawtext=text='KK.Ent':${logoStyle}[v]`,
   ].join(";");
 
   execSync(
@@ -329,7 +333,7 @@ function fitAudioToSlot(inputPath, rawDuration, slotDuration, outPath) {
   factor = Math.max(1.0, Math.min(2.0, factor));
   // Slightly lower the narration volume (was sounding too loud/harsh at full gain).
   execSync(
-    `ffmpeg -y -i "${inputPath}" -filter:a "atempo=${factor.toFixed(3)},volume=0.8" -ar 44100 -ac 2 "${outPath}"`,
+    `ffmpeg -y -i "${inputPath}" -filter:a "atempo=${factor.toFixed(3)},volume=1.6,alimiter=limit=0.95" -ar 44100 -ac 2 "${outPath}"`,
     { stdio: "ignore" }
   );
 }
