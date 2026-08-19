@@ -51,7 +51,7 @@ jobs:
       - name: Dub with Burmese AI voice + burn subtitles + remove watermark + mirror
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          EDGE_TTS_VOICE: my-MM-ThihaNeural
+          EDGE_TTS_VOICE: en-US-AvaNeural
           BG_MUSIC_PATH: assets/bgmusic.mp3
         run: node dub-and-caption.js output.mp4 final_output.mp4
 
