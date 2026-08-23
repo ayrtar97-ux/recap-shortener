@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Recap Shortener — Control Room</title>
+<style>
+  :root {
+    --bg: #0e0d0b;
+    --bg-panel: #171512;
+    --bg-field: #1f1c18;
+    --line: #2c2822;
+    --gold: #e0a940;
+    --gold-dim: #8a6b2c;
+    --text: #f0ece2;
+    --text-dim: #9c9587;
+    --red: #e0554a;
+    --green: #6cae6b;
+    --font-display: "Iowan Old Style", "Georgia", serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "SF Mono", "Consolas", "Menlo", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: radial-gradient(ellipse 120% 80% at 50% -10%, #221b0f 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: var(--font-body);
+    min-height: 100vh;
+    padding: 28px 18px 60px;
+  }
+
+  .reel {
+    max-width: 460px;
+    margin: 0 auto;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    color: var(--gold-dim);
+    text-transform: uppercase;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 30px;
+    margin: 6px 0 4px;
+    letter-spacing: -0.01em;
+  }
+
+  .sub {
+    color: var(--text-dim);
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+
+  .panel-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .panel-title::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--gold);
+    display: inline-block;
+  }
+
+  label {
+    display: block;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    margin: 14px 0 6px;
+  }
+  label:first-of-type { margin-top: 0; }
+
+  input {
+    width: 100%;
+    background: var(--bg-field);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 12px;
+    color: var(--text);
+    font-size: 15px;
+    font-family: var(--font-mono);
+  }
+
+  input:focus {
+    outline: none;
+    border-color: var(--gold-dim);
+  }
+
+  .hint {
+    font-size: 11px;
+    color: #6b6558;
+    margin-top: 5px;
+    line-height: 1.4;
+  }
+
+  button {
+    width: 100%;
+    margin-top: 20px;
+    padding: 14px;
+    border-radius: 9px;
+    border: none;
+    background: var(--gold);
+    color: #1a1408;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: transform 0.12s ease, opacity 0.12s ease;
+  }
+  button:active { transform: scale(0.98); }
+  button:disabled {
+    background: var(--bg-field);
+    color: var(--text-dim);
+    cursor: not-allowed;
+  }
+
+  .status-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .status-badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+  }
+  .status-badge.running { color: var(--gold); border-color: var(--gold-dim); }
+  .status-badge.success { color: var(--green); border-color: #3a4f38; }
+  .status-badge.failed { color: var(--red); border-color: #4f322e; }
+
+  .log {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--text-dim);
+    max-height: 220px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+  .log .line { display: flex; gap: 8px; }
+  .log .t { color: #55503f; flex-shrink: 0; }
+  .log .active { color: var(--text); }
+
+  .progress-track {
+    height: 3px;
+    background: var(--line);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--gold);
+    width: 8%;
+    transition: width 0.6s ease;
+  }
+
+  .result video {
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    display: block;
+    margin-bottom: 14px;
+    background: #000;
+  }
+
+  .download-btn {
+    display: block;
+    text-align: center;
+    text-decoration: none;
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 24px;
+    font-size: 11px;
+    color: #524d40;
+    font-family: var(--font-mono);
+    line-height: 1.6;
+  }
+
+  .filmstrip {
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+    margin: 0 0 22px;
+  }
+  .filmstrip span {
+    width: 5px;
+    height: 5px;
+    background: var(--line);
+    border-radius: 1px;
+  }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="reel">
+    <header>
+      <div class="eyebrow">Recap Shortener</div>
+      <h1>Control Room</h1>
+      <div class="sub">Pick a video, press go, wait for the cut.</div>
+    </header>
+
+    <div class="filmstrip">
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+
+    <!-- Setup panel -->
+    <div class="panel" id="setup-panel">
+      <div class="panel-title">Setup</div>
+
+      <label for="pat">GitHub token</label>
+      <input id="pat" type="password" placeholder="ghp_..." autocomplete="off" />
+      <div class="hint">Fine-grained token on this repo only, with Actions (read/write) + Contents (read/write) permission. Never saved — you'll paste it each visit.</div>
+
+      <label for="repo">Repository</label>
+      <input id="repo" type="text" value="ayrtar97-ux/recap-shortener" />
+
+      <label for="videoFile">Recap video</label>
+      <input id="videoFile" type="file" accept="video/*" />
+      <div class="hint">Uploaded straight to a temporary GitHub Release asset — no Drive link needed. Cleaned up automatically after the run.</div>
+
+      <button id="start-btn">Start the cut</button>
+    </div>
+
+    <!-- Upload panel -->
+    <div class="panel hidden" id="upload-panel">
+      <div class="status-row">
+        <div class="panel-title" style="margin:0">Uploading video</div>
+        <div class="status-badge running" id="upload-badge">0%</div>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="upload-progress-fill"></div></div>
+    </div>
+
+    <!-- Progress panel -->
+    <div class="panel hidden" id="progress-panel">
+      <div class="status-row">
+        <div class="panel-title" style="margin:0">Run in progress</div>
+        <div class="status-badge running" id="status-badge">queued</div>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="log" id="log"></div>
+    </div>
+
+    <!-- Result panel -->
+    <div class="panel hidden result" id="result-panel">
+      <div class="panel-title">Ready</div>
+      <video id="result-video" controls playsinline></video>
+      <a class="download-btn" id="download-link"><button type="button">Download final_output.mp4</button></a>
+    </div>
+
+    <button class="hidden" id="reset-btn" style="background:var(--bg-field);color:var(--text-dim);margin-top:10px;">Start another</button>
+
+    <footer>
+      Triggers .github/workflows/shorten.yml via the GitHub Actions API.<br/>
+      Nothing here touches a third-party server — only GitHub's own API.
+    </footer>
+  </div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+const WORKFLOW_FILE = "shorten.yml";
+const BRANCH = "main";
+
+const $ = (id) => document.getElementById(id);
+const setupPanel = $("setup-panel");
+const uploadPanel = $("upload-panel");
+const progressPanel = $("progress-panel");
+const resultPanel = $("result-panel");
+const startBtn = $("start-btn");
+const resetBtn = $("reset-btn");
+const statusBadge = $("status-badge");
+const uploadBadge = $("upload-badge");
+const progressFill = $("progress-fill");
+const uploadProgressFill = $("upload-progress-fill");
+const logEl = $("log");
+
+function logLine(msg, active = false) {
+  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const div = document.createElement("div");
+  div.className = "line" + (active ? " active" : "");
+  div.innerHTML = `<span class="t">${time}</span><span>${msg}</span>`;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setBadge(text, cls) {
+  statusBadge.textContent = text;
+  statusBadge.className = "status-badge " + cls;
+}
+
+function ghHeaders(token) {
+  return {
+    "Authorization": `Bearer ${token}`,
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+}
+
+async function gh(url, token, opts = {}) {
+  const res = await fetch(url, { ...opts, headers: { ...ghHeaders(token), ...(opts.headers || {}) } });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`GitHub API ${res.status} on ${url}\n${body}`);
+  }
+  return res;
+}
+
+// Creates a temporary Release, uploads the picked video file to it as an
+// asset (with progress via XHR since fetch doesn't expose upload progress),
+// and returns { releaseId, assetId } for the workflow to consume and clean up.
+async function uploadVideoAsRelease(file, repo, token) {
+  const tagName = `upload-${Date.now()}`;
+  const releaseRes = await gh(`https://api.github.com/repos/${repo}/releases`, token, {
+    method: "POST",
+    body: JSON.stringify({
+      tag_name: tagName,
+      name: `Temp upload ${tagName}`,
+      body: "Temporary video upload for the recap pipeline — auto-deleted after processing.",
+      draft: false,
+      prerelease: true,
+    }),
+  });
+  const release = await releaseRes.json();
+
+  const uploadUrl = release.upload_url.replace("{?name,label}", `?name=${encodeURIComponent(file.name || "input.mp4")}`);
+
+  const assetId = await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", uploadUrl);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("Content-Type", file.type || "video/mp4");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        uploadBadge.textContent = pct + "%";
+        uploadProgressFill.style.width = pct + "%";
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText).id);
+      } else {
+        reject(new Error(`Asset upload failed: ${xhr.status} ${xhr.responseText}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.send(file);
+  });
+
+  return { releaseId: release.id, assetId };
+}
+
+async function startRun() {
+  const token = $("pat").value.trim();
+  const repo = $("repo").value.trim();
+  const fileInput = $("videoFile");
+  const file = fileInput.files[0];
+
+  if (!token || !repo || !file) {
+    alert("Fill in the token, repository, and pick a video file first.");
+    return;
+  }
+
+  startBtn.disabled = true;
+  setupPanel.classList.add("hidden");
+  uploadPanel.classList.remove("hidden");
+  uploadBadge.textContent = "0%";
+  uploadProgressFill.style.width = "0%";
+
+  let releaseId, assetId;
+  try {
+    ({ releaseId, assetId } = await uploadVideoAsRelease(file, repo, token));
+  } catch (err) {
+    alert(`Upload failed: ${err.message}`);
+    uploadPanel.classList.add("hidden");
+    setupPanel.classList.remove("hidden");
+    startBtn.disabled = false;
+    return;
+  }
+
+  uploadPanel.classList.add("hidden");
+  progressPanel.classList.remove("hidden");
+  logEl.innerHTML = "";
+  setBadge("dispatching", "running");
+  progressFill.style.width = "6%";
+  logLine("Video uploaded. Sending dispatch to GitHub Actions...", true);
+
+  const dispatchTime = new Date();
+
+  try {
+    await gh(
+      `https://api.github.com/repos/${repo}/actions/workflows/${WORKFLOW_FILE}/dispatches`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ref: BRANCH,
+          inputs: { asset_id: String(assetId), release_id: String(releaseId) },
+        }),
+      }
+    );
+  } catch (err) {
+    logLine(`Failed to start: ${err.message}`);
+    setBadge("failed", "failed");
+    startBtn.disabled = false;
+    return;
+  }
+
+  logLine("Dispatch accepted. Looking for the new run...");
+
+  // Poll for the run that was just created
+  let run = null;
+  for (let i = 0; i < 20; i++) {
+    await sleep(3000);
+    const res = await gh(
+      `https://api.github.com/repos/${repo}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${BRANCH}&event=workflow_dispatch&per_page=5`,
+      token
+    );
+    const data = await res.json();
+    const candidate = data.workflow_runs.find((r) => new Date(r.created_at) >= new Date(dispatchTime.getTime() - 5000));
+    if (candidate) { run = candidate; break; }
+  }
+
+  if (!run) {
+    logLine("Couldn't find the run — check the Actions tab manually.");
+    setBadge("unknown", "failed");
+    startBtn.disabled = false;
+    return;
+  }
+
+  logLine(`Found run #${run.run_number}. Watching progress...`);
+  progressFill.style.width = "15%";
+
+  // Poll run status until completed
+  let lastStatus = "";
+  while (true) {
+    await sleep(5000);
+    const res = await gh(`https://api.github.com/repos/${repo}/actions/runs/${run.id}`, token);
+    run = await res.json();
+
+    if (run.status !== lastStatus) {
+      logLine(`Status: ${run.status}`, true);
+      lastStatus = run.status;
+      setBadge(run.status, "running");
+    }
+
+    // rough progress estimate while running
+    if (run.status === "in_progress") {
+      const elapsedMin = (Date.now() - new Date(run.run_started_at)) / 60000;
+      const pct = Math.min(90, 15 + elapsedMin * 6);
+      progressFill.style.width = pct + "%";
+    }
+
+    if (run.status === "completed") break;
+  }
+
+  if (run.conclusion !== "success") {
+    logLine(`Run finished with conclusion: ${run.conclusion}. Open the Actions tab to see why.`);
+    setBadge(run.conclusion || "failed", "failed");
+    startBtn.disabled = false;
+    return;
+  }
+
+  progressFill.style.width = "95%";
+  logLine("Run succeeded. Fetching the video artifact...", true);
+  setBadge("downloading", "running");
+
+  const artifactsRes = await gh(`https://api.github.com/repos/${repo}/actions/runs/${run.id}/artifacts`, token);
+  const artifactsData = await artifactsRes.json();
+  const artifact = artifactsData.artifacts.find((a) => a.name === "final-video") || artifactsData.artifacts[0];
+
+  if (!artifact) {
+    logLine("No artifact found on this run.");
+    setBadge("no artifact", "failed");
+    startBtn.disabled = false;
+    return;
+  }
+
+  const zipRes = await gh(artifact.archive_download_url, token);
+  const zipBlob = await zipRes.blob();
+
+  logLine("Unzipping...", true);
+  const zip = await JSZip.loadAsync(zipBlob);
+  const videoFileName = Object.keys(zip.files).find((n) => n.endsWith(".mp4"));
+  const videoEntry = zip.files[videoFileName];
+  const videoBlob = await videoEntry.async("blob");
+  const videoUrl = URL.createObjectURL(new Blob([videoBlob], { type: "video/mp4" }));
+  // Base64 copy is only used for the Android native-save bridge, computed lazily on tap.
+  let videoBase64Cache = null;
+  async function getVideoBase64() {
+    if (!videoBase64Cache) videoBase64Cache = await videoEntry.async("base64");
+    return videoBase64Cache;
+  }
+
+  progressFill.style.width = "100%";
+  setBadge("done", "success");
+  logLine("Ready.");
+
+  $("result-video").src = videoUrl;
+  const downloadLink = $("download-link");
+  const downloadFilename = videoFileName || "final_output.mp4";
+
+  if (window.AndroidDownloader) {
+    // Running inside the APK's WebView — blob: downloads don't work natively,
+    // so hand the file to Android to save into the Downloads folder directly.
+    downloadLink.removeAttribute("href");
+    downloadLink.onclick = async (e) => {
+      e.preventDefault();
+      logLine("Saving to Downloads...");
+      const base64 = await getVideoBase64();
+      window.AndroidDownloader.saveVideo(base64, downloadFilename);
+    };
+  } else {
+    // Regular browser — normal blob download link.
+    downloadLink.href = videoUrl;
+    downloadLink.download = downloadFilename;
+  }
+
+  progressPanel.classList.add("hidden");
+  resultPanel.classList.remove("hidden");
+  resetBtn.classList.remove("hidden");
+  startBtn.disabled = false;
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+startBtn.addEventListener("click", startRun);
+resetBtn.addEventListener("click", () => {
+  resultPanel.classList.add("hidden");
+  progressPanel.classList.add("hidden");
+  uploadPanel.classList.add("hidden");
+  resetBtn.classList.add("hidden");
+  $("videoFile").value = "";
+  setupPanel.classList.remove("hidden");
+});
+</script>
+</body>
+</html>
