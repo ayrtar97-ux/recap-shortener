@@ -236,7 +236,7 @@
     <header>
       <div class="eyebrow">Recap Shortener</div>
       <h1>Control Room</h1>
-      <div class="sub">Pick a video, press go, wait for the cut.</div>
+      <div class="sub">Paste a Drive file, press go, wait for the cut.</div>
     </header>
 
     <div class="filmstrip">
@@ -254,20 +254,11 @@
       <label for="repo">Repository</label>
       <input id="repo" type="text" value="ayrtar97-ux/recap-shortener" />
 
-      <label for="videoFile">Recap video</label>
-      <input id="videoFile" type="file" accept="video/*" />
-      <div class="hint">Uploaded straight to a temporary GitHub Release asset — no Drive link needed. Cleaned up automatically after the run.</div>
+      <label for="driveId">Google Drive file ID</label>
+      <input id="driveId" type="text" placeholder="1USOn6j0dBG14hWNvUB811B21SqKt_eFn" />
+      <div class="hint">The long code from the Drive share link, between /d/ and /view. (Direct file upload from the browser isn't possible — GitHub's upload endpoint doesn't allow it from web pages.)</div>
 
       <button id="start-btn">Start the cut</button>
-    </div>
-
-    <!-- Upload panel -->
-    <div class="panel hidden" id="upload-panel">
-      <div class="status-row">
-        <div class="panel-title" style="margin:0">Uploading video</div>
-        <div class="status-badge running" id="upload-badge">0%</div>
-      </div>
-      <div class="progress-track"><div class="progress-fill" id="upload-progress-fill"></div></div>
     </div>
 
     <!-- Progress panel -->
@@ -302,15 +293,12 @@ const BRANCH = "main";
 
 const $ = (id) => document.getElementById(id);
 const setupPanel = $("setup-panel");
-const uploadPanel = $("upload-panel");
 const progressPanel = $("progress-panel");
 const resultPanel = $("result-panel");
 const startBtn = $("start-btn");
 const resetBtn = $("reset-btn");
 const statusBadge = $("status-badge");
-const uploadBadge = $("upload-badge");
 const progressFill = $("progress-fill");
-const uploadProgressFill = $("upload-progress-fill");
 const logEl = $("log");
 
 function logLine(msg, active = false) {
@@ -344,85 +332,23 @@ async function gh(url, token, opts = {}) {
   return res;
 }
 
-// Creates a temporary Release, uploads the picked video file to it as an
-// asset (with progress via XHR since fetch doesn't expose upload progress),
-// and returns { releaseId, assetId } for the workflow to consume and clean up.
-async function uploadVideoAsRelease(file, repo, token) {
-  const tagName = `upload-${Date.now()}`;
-  const releaseRes = await gh(`https://api.github.com/repos/${repo}/releases`, token, {
-    method: "POST",
-    body: JSON.stringify({
-      tag_name: tagName,
-      name: `Temp upload ${tagName}`,
-      body: "Temporary video upload for the recap pipeline — auto-deleted after processing.",
-      draft: false,
-      prerelease: true,
-    }),
-  });
-  const release = await releaseRes.json();
-
-  const uploadUrl = release.upload_url.replace("{?name,label}", `?name=${encodeURIComponent(file.name || "input.mp4")}`);
-
-  const assetId = await new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", uploadUrl);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-    xhr.setRequestHeader("Content-Type", file.type || "video/mp4");
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 100);
-        uploadBadge.textContent = pct + "%";
-        uploadProgressFill.style.width = pct + "%";
-      }
-    };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(JSON.parse(xhr.responseText).id);
-      } else {
-        reject(new Error(`Asset upload failed: ${xhr.status} ${xhr.responseText}`));
-      }
-    };
-    xhr.onerror = () => reject(new Error("Network error during upload"));
-    xhr.send(file);
-  });
-
-  return { releaseId: release.id, assetId };
-}
-
 async function startRun() {
   const token = $("pat").value.trim();
   const repo = $("repo").value.trim();
-  const fileInput = $("videoFile");
-  const file = fileInput.files[0];
+  const driveId = $("driveId").value.trim();
 
-  if (!token || !repo || !file) {
-    alert("Fill in the token, repository, and pick a video file first.");
+  if (!token || !repo || !driveId) {
+    alert("Fill in the token, repository, and Drive file ID first.");
     return;
   }
 
   startBtn.disabled = true;
   setupPanel.classList.add("hidden");
-  uploadPanel.classList.remove("hidden");
-  uploadBadge.textContent = "0%";
-  uploadProgressFill.style.width = "0%";
-
-  let releaseId, assetId;
-  try {
-    ({ releaseId, assetId } = await uploadVideoAsRelease(file, repo, token));
-  } catch (err) {
-    alert(`Upload failed: ${err.message}`);
-    uploadPanel.classList.add("hidden");
-    setupPanel.classList.remove("hidden");
-    startBtn.disabled = false;
-    return;
-  }
-
-  uploadPanel.classList.add("hidden");
   progressPanel.classList.remove("hidden");
   logEl.innerHTML = "";
   setBadge("dispatching", "running");
   progressFill.style.width = "6%";
-  logLine("Video uploaded. Sending dispatch to GitHub Actions...", true);
+  logLine("Sending dispatch to GitHub Actions...", true);
 
   const dispatchTime = new Date();
 
@@ -432,10 +358,7 @@ async function startRun() {
       token,
       {
         method: "POST",
-        body: JSON.stringify({
-          ref: BRANCH,
-          inputs: { asset_id: String(assetId), release_id: String(releaseId) },
-        }),
+        body: JSON.stringify({ ref: BRANCH, inputs: { drive_file_id: driveId } }),
       }
     );
   } catch (err) {
@@ -567,9 +490,7 @@ startBtn.addEventListener("click", startRun);
 resetBtn.addEventListener("click", () => {
   resultPanel.classList.add("hidden");
   progressPanel.classList.add("hidden");
-  uploadPanel.classList.add("hidden");
   resetBtn.classList.add("hidden");
-  $("videoFile").value = "";
   setupPanel.classList.remove("hidden");
 });
 </script>
