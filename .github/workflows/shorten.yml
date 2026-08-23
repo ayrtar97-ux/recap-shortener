@@ -3,9 +3,15 @@ name: Shorten Recap Video
 on:
   workflow_dispatch:
     inputs:
-      drive_file_id:
-        description: "Google Drive file ID of the recap video (the long code in the share link, e.g. 1USOn6j0dBG14hWNvUB811B21SqKt_eFn)"
+      asset_id:
+        description: "GitHub Release asset ID of the uploaded video (created by the web app)"
         required: true
+      release_id:
+        description: "GitHub Release ID to clean up after the run (optional)"
+        required: false
+
+permissions:
+  contents: write
 
 jobs:
   shorten:
@@ -29,14 +35,16 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Install gdown
-        run: pip install --break-system-packages -U gdown
-
       - name: Install edge-tts
         run: pip install --break-system-packages -U edge-tts
 
-      - name: Download input video from Google Drive
-        run: gdown "${{ github.event.inputs.drive_file_id }}" -O input.mp4
+      - name: Download input video from GitHub Release asset
+        run: |
+          curl -L \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/assets/${{ github.event.inputs.asset_id }}" \
+            -o input.mp4
 
       - name: Verify downloaded video
         run: |
@@ -60,3 +68,11 @@ jobs:
         with:
           name: final-video
           path: final_output.mp4
+
+      - name: Clean up temporary release (best-effort)
+        if: always() && github.event.inputs.release_id != ''
+        continue-on-error: true
+        run: |
+          curl -X DELETE \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.inputs.release_id }}"
