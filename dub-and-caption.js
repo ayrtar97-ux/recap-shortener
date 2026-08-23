@@ -47,6 +47,10 @@ if (!INPUT_PATH) {
 // Adjust this box to match where the watermark actually sits on your video.
 // x,y = top-left corner; w,h = width/height of the box to blend out.
 const WATERMARK_BOX = { x: 980, y: 570, w: 290, h: 60 };
+// Slight zoom-in on the source video before framing it — crops out a bit of
+// the edges (helps hide residual watermark/logo remnants near the frame
+// border too) and reads a little tighter/punchier. 1.0 = no zoom.
+const ZOOM_FACTOR = Number(process.env.ZOOM_FACTOR || 1.12);
 
 const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || "en-US-AvaNeural";
 // Speeds up the base narration pace a bit for punchier, more viral-style delivery.
@@ -235,8 +239,8 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
     "fontcolor=white:fontsize=40:box=1:boxcolor=black@0.35:boxborderw=14:x=30:y=50:font=Arial";
 
   const filterComplex = [
-    // remove watermark (no mirror flip anymore)
-    `[0:v]delogo=x=${x}:y=${y}:w=${w}:h=${h}:show=0[clean]`,
+    // remove watermark, then zoom in slightly (scale up, crop back to original size, centered)
+    `[0:v]delogo=x=${x}:y=${y}:w=${w}:h=${h}:show=0,scale=${Math.round(vidW * ZOOM_FACTOR)}:${Math.round(vidH * ZOOM_FACTOR)},crop=${vidW}:${vidH}[clean]`,
     // duplicate: one copy becomes a blurred, cropped-to-fill background;
     // the other stays full-frame and sits on top, centered
     `[clean]split=2[bgsrc][fgsrc]`,
@@ -307,21 +311,35 @@ function clampBoxToFrame(box, frameW, frameH) {
   return { x, y, w, h };
 }
 
-function edgeTTS(text, outPath) {
+function edgeTTS(text, outPath, retries = 3) {
   // Write text to a temp file to avoid shell-escaping issues with Burmese
   // Unicode text and punctuation, then let edge-tts read it with --file.
   const textFile = outPath + ".txt";
   fs.writeFileSync(textFile, text, "utf8");
-  execFileSync(
-    "edge-tts",
-    [
-      "--voice", EDGE_TTS_VOICE,
-      "--rate", EDGE_TTS_RATE,
-      "--file", textFile,
-      "--write-media", outPath,
-    ],
-    { stdio: "ignore" }
-  );
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      execFileSync(
+        "edge-tts",
+        [
+          "--voice", EDGE_TTS_VOICE,
+          "--rate", EDGE_TTS_RATE,
+          "--file", textFile,
+          "--write-media", outPath,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] }
+      );
+      return; // success
+    } catch (err) {
+      const stderr = err.stderr ? err.stderr.toString() : "(no stderr captured)";
+      if (attempt === retries) {
+        console.error(`edge-tts failed after ${retries} attempts. stderr:\n${stderr}`);
+        throw err;
+      }
+      console.warn(`edge-tts attempt ${attempt}/${retries} failed, retrying in 3s... stderr: ${stderr.trim()}`);
+      execSync("sleep 3");
+    }
+  }
 }
 
 function fitAudioToSlot(inputPath, rawDuration, slotDuration, outPath) {
