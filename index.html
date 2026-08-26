@@ -462,21 +462,31 @@ async function startRun() {
   const downloadLink = $("download-link");
   const downloadFilename = videoFileName || "final_output.mp4";
 
-  if (window.AndroidDownloader) {
-    // Running inside the APK's WebView — blob: downloads don't work natively,
-    // so hand the file to Android to save into the Downloads folder directly.
-    downloadLink.removeAttribute("href");
-    downloadLink.onclick = async (e) => {
-      e.preventDefault();
+  async function performDownload() {
+    if (window.AndroidDownloader) {
+      // Running inside the APK's WebView — blob: downloads don't work natively,
+      // so hand the file to Android to save into the Downloads folder directly.
       logLine("Saving to Downloads...");
       const base64 = await getVideoBase64();
       window.AndroidDownloader.saveVideo(base64, downloadFilename);
-    };
-  } else {
-    // Regular browser — normal blob download link.
-    downloadLink.href = videoUrl;
-    downloadLink.download = downloadFilename;
+    } else {
+      // Regular browser — trigger the anchor's native blob download.
+      downloadLink.href = videoUrl;
+      downloadLink.download = downloadFilename;
+      downloadLink.click();
+    }
   }
+
+  // Manual re-download button, in case the automatic one below gets blocked
+  // by the browser or the person wants to save it again.
+  downloadLink.onclick = (e) => {
+    e.preventDefault();
+    performDownload();
+  };
+
+  // Auto-start the download the moment the video is ready — no extra tap needed.
+  performDownload();
+  logLine("Download started automatically.");
 
   progressPanel.classList.add("hidden");
   resultPanel.classList.remove("hidden");
