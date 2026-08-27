@@ -4,10 +4,11 @@
  * Output: final_output.mp4
  *   - watermark removed
  *   - converted to 9:16 vertical (TikTok/Shorts format) with blurred background padding
- *   - original audio replaced with an emotional English AI narration (via edge-tts, free, no quota)
- *   - bold, viral-style English subtitles burned in
+ *   - original audio replaced with an emotional AI narration in English OR Burmese,
+ *     matching whichever EDGE_TTS_VOICE is selected (via edge-tts, free, no quota)
+ *   - bold, viral-style subtitles burned in, in the same language as the narration
  *   - opening line written as a scroll-stopping hook
- *   - "KK.Ent" logo watermark burned into the corner
+ *   - custom logo burned into the corner (image if provided, else text fallback)
  *   - optional background music bed, quietly mixed under the narration
  *
  * Requirements:
@@ -19,10 +20,15 @@
  *   GEMINI_API_KEY
  *
  * Optional env vars:
- *   EDGE_TTS_VOICE  (default: en-US-AvaNeural — expressive English voice.
- *                    try en-US-GuyNeural or en-US-AndrewNeural for a male voice)
+ *   EDGE_TTS_VOICE  (default: en-US-AvaNeural. Use en-US-GuyNeural for English male,
+ *                    my-MM-NilarNeural for Burmese female, my-MM-ThihaNeural for
+ *                    Burmese male — language is auto-detected from this value)
  *   BG_MUSIC_PATH   (path to a royalty-free mp3/wav to use as background music;
  *                    skipped entirely if unset or the file doesn't exist)
+ *   LOGO_IMAGE_PATH (path to a PNG/JPG to use as the brand logo; default
+ *                    "assets/logo.png". Falls back to a text logo if missing.)
+ *   LOGO_TEXT       (text logo shown when no image is found; default "KK.Ent")
+ *   LOGO_WIDTH, LOGO_X, LOGO_Y   (logo size/position; defaults 220 / 30 / 50)
  *
  * Usage:
  *   node dub-and-caption.js short_video.mp4 final_output.mp4
@@ -51,8 +57,20 @@ const WATERMARK_BOX = { x: 980, y: 570, w: 290, h: 60 };
 // the edges (helps hide residual watermark/logo remnants near the frame
 // border too) and reads a little tighter/punchier. 1.0 = no zoom.
 const ZOOM_FACTOR = Number(process.env.ZOOM_FACTOR || 1.12);
+// Custom logo overlay. If LOGO_IMAGE_PATH points to an existing image file,
+// it's used as-is (scaled to LOGO_WIDTH). Otherwise falls back to a text
+// logo reading LOGO_TEXT. Position is the same for both (top-left by default).
+const LOGO_IMAGE_PATH = process.env.LOGO_IMAGE_PATH || "assets/logo.png";
+const LOGO_TEXT = process.env.LOGO_TEXT || "KK.Ent";
+const LOGO_WIDTH = Number(process.env.LOGO_WIDTH || 220);
+const LOGO_X = process.env.LOGO_X || "30";
+const LOGO_Y = process.env.LOGO_Y || "50";
 
 const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE || "en-US-AvaNeural";
+// Which language field to actually narrate/caption in, derived from the
+// selected voice — a Burmese voice needs Burmese text, not English text
+// read phonetically (which is what was happening before this fix).
+const LANGUAGE = EDGE_TTS_VOICE.startsWith("my-MM") ? "burmese" : "english";
 // Speeds up the base narration pace a bit for punchier, more viral-style delivery.
 // Format: "+15%" faster, "-10%" slower, "+0%" for edge-tts's natural default pace.
 const EDGE_TTS_RATE = process.env.EDGE_TTS_RATE || "+15%";
@@ -97,22 +115,28 @@ async function main() {
     file = await ai.files.get({ name: uploaded.name });
   }
   if (file.state === "FAILED") throw new Error("Gemini file processing failed.");
-  console.log("\nGenerating emotional English narration script...");
+  console.log(`Generating emotional ${LANGUAGE === "burmese" ? "Burmese" : "English"} narration script...`);
 
   const prompt = `
 This is a short recap-style video made of several DISCONNECTED clips cut together from a
 longer movie — the scenes jump around and are NOT continuous. There is no usable dialogue
-audio (it will be replaced). Watch the video and write a natural, EMOTIONAL English
-voice-over narration that describes what's happening AND actively bridges the gaps between
-clips so the story feels connected rather than jumpy.
+audio (it will be replaced). Watch the video and write a natural, EMOTIONAL voice-over
+narration that describes what's happening AND actively bridges the gaps between clips so
+the story feels connected rather than jumpy.
+
+Write the narration in BOTH languages for every cue:
+- "english": natural, spoken English narration — NOT flat or robotic. Write it the way a
+  dramatic movie-trailer narrator would deliver it: charged with tension, urgency, awe, or
+  dread as the moment calls for.
+- "burmese": a natural, conversational Burmese narration of the SAME moment — not a stiff
+  word-for-word translation of the English, but its own naturally-spoken Burmese line with
+  the same emotional charge and meaning, suitable for a Burmese voice actor to read aloud.
 
 Rules:
 - Break the narration into short cues of 2-6 seconds each, covering almost the entire video duration.
 - Cues must be in chronological order and must not overlap.
-- "english" must be natural, spoken narration — NOT flat or robotic. Write it the way a
-  dramatic movie-trailer narrator would deliver it: charged with tension, urgency, awe, or
-  dread as the moment calls for. Use punctuation (short sentences, em-dashes, ellipses) that
-  implies the emotional delivery you want spoken.
+- Use punctuation (short sentences, em-dashes, ellipses) that implies the emotional delivery
+  you want spoken, in both languages.
 - Timestamps in MM:SS format, relative to this video.
 
 CONTINUITY REQUIREMENT (important — this is a recap made of disconnected clips):
@@ -136,7 +160,7 @@ HOOK REQUIREMENT (critical for virality):
 - After the hook line, continue with natural descriptive narration for the rest.
 
 Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
-[{"start":"MM:SS","end":"MM:SS","english":"..."}]
+[{"start":"MM:SS","end":"MM:SS","english":"...","burmese":"..."}]
 `.trim();
 
   const result = await withRetry(() =>
@@ -197,7 +221,7 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
     const slotDuration = Math.max(0.5, endSec - startSec);
 
     const rawMp3 = path.join(tmpDir, `voice_raw_${i}.mp3`);
-    edgeTTS(cue.english, rawMp3);
+    edgeTTS(cue[LANGUAGE], rawMp3);
 
     const rawDuration = getDuration(rawMp3);
     const fittedWav = path.join(tmpDir, `voice_fit_${i}.wav`);
@@ -233,10 +257,13 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   const { width: vidW, height: vidH } = getDimensions(INPUT_PATH);
   const { x, y, w, h } = clampBoxToFrame(WATERMARK_BOX, vidW, vidH);
   const escapedSrt = srtPath.replace(/:/g, "\\:");
+  const subtitleFont = LANGUAGE === "burmese" ? "Noto Sans Myanmar" : "Arial";
   const subtitleStyle =
-    "FontName=Arial,FontSize=34,Bold=1,PrimaryColour=&H00FFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=4,Shadow=1,Alignment=2,MarginV=320,PlayResX=1080,PlayResY=1920";
+    `FontName=${subtitleFont},FontSize=34,Bold=1,PrimaryColour=&H00FFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=4,Shadow=1,Alignment=2,MarginV=320,PlayResX=1080,PlayResY=1920`;
   const logoStyle =
-    "fontcolor=white:fontsize=40:box=1:boxcolor=black@0.35:boxborderw=14:x=30:y=50:font=Arial";
+    `fontcolor=white:fontsize=40:box=1:boxcolor=black@0.35:boxborderw=14:x=${LOGO_X}:y=${LOGO_Y}:font=Arial`;
+
+  const hasLogoImage = LOGO_IMAGE_PATH && fs.existsSync(LOGO_IMAGE_PATH);
 
   const filterComplex = [
     // remove watermark, then zoom in slightly (scale up, crop back to original size, centered)
@@ -247,13 +274,21 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
     `[bgsrc]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:8[bg]`,
     `[fgsrc]scale=1080:-2[fg]`,
     `[bg][fg]overlay=(W-w)/2:(H-h)/2[stacked]`,
-    // burn subtitles, then the KK.Ent brand logo on top of everything
+    // burn subtitles first
     `[stacked]subtitles='${escapedSrt}':force_style='${subtitleStyle}'[captioned]`,
-    `[captioned]drawtext=text='KK.Ent':${logoStyle}[v]`,
-  ].join(";");
+    // then the brand logo on top — a custom image if provided, otherwise text
+    hasLogoImage
+      ? `[2:v]scale=${LOGO_WIDTH}:-1[logoimg]`
+      : null,
+    hasLogoImage
+      ? `[captioned][logoimg]overlay=${LOGO_X}:${LOGO_Y}[v]`
+      : `[captioned]drawtext=text='${LOGO_TEXT}':${logoStyle}[v]`,
+  ].filter(Boolean).join(";");
+
+  const logoInput = hasLogoImage ? `-i "${LOGO_IMAGE_PATH}" ` : "";
 
   execSync(
-    `ffmpeg -y -i "${INPUT_PATH}" -i "${finalAudioTrack}" ` +
+    `ffmpeg -y -i "${INPUT_PATH}" -i "${finalAudioTrack}" ${logoInput}` +
       `-filter_complex "${filterComplex}" ` +
       `-map "[v]" -map 1:a ` +
       `-c:v libx264 -crf 20 -preset veryfast -c:a aac -shortest "${OUTPUT_PATH}"`,
@@ -393,7 +428,7 @@ function buildSrt(cues, outPath) {
     .map((cue, i) => {
       const start = srtTimestamp(toSeconds(cue.start));
       const end = srtTimestamp(toSeconds(cue.end));
-      return `${i + 1}\n${start} --> ${end}\n${cue.english}\n`;
+      return `${i + 1}\n${start} --> ${end}\n${cue[LANGUAGE]}\n`;
     })
     .join("\n");
   fs.writeFileSync(outPath, lines, "utf8");
