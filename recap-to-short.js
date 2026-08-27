@@ -28,7 +28,7 @@ const TARGET_MAX_SECONDS = 300; // 5 min
 
 // Retries a Gemini call on transient errors (503 overloaded, 429 rate-limited)
 // with exponential backoff. Does not retry on other errors (e.g. bad request).
-async function withRetry(fn, { retries = 5, baseDelayMs = 5000 } = {}) {
+async function withRetry(fn, { retries = 8, baseDelayMs = 5000, maxDelayMs = 60000 } = {}) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       return await fn();
@@ -36,7 +36,7 @@ async function withRetry(fn, { retries = 5, baseDelayMs = 5000 } = {}) {
       const status = err && (err.status || (err.error && err.error.code));
       const isTransient = status === 503 || status === 429;
       if (!isTransient || attempt === retries) throw err;
-      const delay = baseDelayMs * Math.pow(2, attempt - 1);
+      const delay = Math.min(baseDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
       console.warn(
         `Gemini call failed (status ${status}), retrying in ${delay / 1000}s... (attempt ${attempt}/${retries})`
       );
