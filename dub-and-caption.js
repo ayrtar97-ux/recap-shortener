@@ -131,6 +131,11 @@ Write the narration in BOTH languages for every cue:
 - "burmese": a natural, conversational Burmese narration of the SAME moment — not a stiff
   word-for-word translation of the English, but its own naturally-spoken Burmese line with
   the same emotional charge and meaning, suitable for a Burmese voice actor to read aloud.
+  Use CORRECT STANDARD MYANMAR SPELLING (orthography) throughout — proper vowel signs,
+  medials, and stacked consonants (e.g. ျ ြ ွ ှ dependent signs placed correctly), standard
+  dictionary word forms rather than colloquial/phonetic shortcuts, and correct spacing
+  around Myanmar punctuation (။ ၊). Re-check each line's spelling before finalizing it;
+  a misspelled word is worse than a slightly less natural phrasing.
 
 Rules:
 - Break the narration into short cues of 2-6 seconds each, covering almost the entire video duration.
@@ -210,6 +215,18 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   console.log(`Got ${cues.length} narration cues.`);
   fs.writeFileSync(path.join(tmpDir, "cues.json"), JSON.stringify(cues, null, 2));
 
+  // ---- 1b. Generate a social-media caption + hashtags for posting ----
+  console.log("Generating social media caption + hashtags...");
+  const hookLine = cues[0] ? cues[0][LANGUAGE] : "";
+  const captionData = await generateCaptionAndHashtags(ai, hookLine, LANGUAGE);
+  const captionFilePath = path.join(process.cwd(), "caption.txt");
+  fs.writeFileSync(
+    captionFilePath,
+    `${captionData.caption}\n\n${captionData.hashtags.join(" ")}\n`,
+    "utf8"
+  );
+  console.log(`Caption + hashtags written to ${captionFilePath}`);
+
   // ---- 2. Generate Burmese TTS audio per cue, time-stretched to fit its slot ----
   console.log(`Generating Burmese voice-over with edge-tts (voice: ${EDGE_TTS_VOICE})...`);
   const audioClips = []; // { path, startSeconds, durationSeconds }
@@ -250,6 +267,9 @@ Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
   // ---- 4. Build subtitle file (Burmese + English, two lines per cue) ----
   const srtPath = path.join(tmpDir, "captions.srt");
   buildSrt(cues, srtPath);
+  const srtOutputPath = path.join(process.cwd(), "captions.srt");
+  fs.copyFileSync(srtPath, srtOutputPath);
+  console.log(`Subtitle file written to ${srtOutputPath}`);
 
   // ---- 5. Final ffmpeg pass: delogo watermark, vertical TikTok format,
   //         burn subtitles + logo, mux new audio ----
@@ -414,55 +434,4 @@ function buildNarrationTrack(clips, totalDuration, outPath, tmpDir) {
 // Loops/trims a music file to match video length and mixes it in quietly
 // (relative to the already-normal-volume narration track) so it sits as a
 // bed under the voice-over rather than competing with it.
-function mixBackgroundMusic(narrationPath, musicPath, totalDuration, outPath) {
-  execSync(
-    `ffmpeg -y -i "${narrationPath}" -stream_loop -1 -i "${musicPath}" ` +
-      `-filter_complex "[1:a]volume=0.15,atrim=0:${totalDuration}[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=0[aout]" ` +
-      `-map "[aout]" -t ${totalDuration} "${outPath}"`,
-    { stdio: "inherit" }
-  );
-}
-
-function buildSrt(cues, outPath) {
-  const lines = cues
-    .map((cue, i) => {
-      const start = srtTimestamp(toSeconds(cue.start));
-      const end = srtTimestamp(toSeconds(cue.end));
-      return `${i + 1}\n${start} --> ${end}\n${cue[LANGUAGE]}\n`;
-    })
-    .join("\n");
-  fs.writeFileSync(outPath, lines, "utf8");
-}
-
-// Recovers as many complete {...} objects as possible from a truncated JSON
-// array string like '[{"a":1},{"b":2},{"c":' by scanning brace depth and
-// dropping the last, incomplete object.
-function recoverJsonArray(rawText) {
-  const objects = [];
-  let depth = 0;
-  let startIdx = -1;
-  for (let i = 0; i < rawText.length; i++) {
-    const ch = rawText[i];
-    if (ch === "{") {
-      if (depth === 0) startIdx = i;
-      depth++;
-    } else if (ch === "}") {
-      depth--;
-      if (depth === 0 && startIdx !== -1) {
-        const candidate = rawText.slice(startIdx, i + 1);
-        try {
-          objects.push(JSON.parse(candidate));
-        } catch (_) {
-          // skip malformed object
-        }
-        startIdx = -1;
-      }
-    }
-  }
-  return objects;
-}
-
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+function mi
