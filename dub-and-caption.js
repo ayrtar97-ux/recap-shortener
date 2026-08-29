@@ -434,4 +434,101 @@ function buildNarrationTrack(clips, totalDuration, outPath, tmpDir) {
 // Loops/trims a music file to match video length and mixes it in quietly
 // (relative to the already-normal-volume narration track) so it sits as a
 // bed under the voice-over rather than competing with it.
-function mi
+function mixBackgroundMusic(narrationPath, musicPath, totalDuration, outPath) {
+  execSync(
+    `ffmpeg -y -i "${narrationPath}" -stream_loop -1 -i "${musicPath}" ` +
+      `-filter_complex "[1:a]volume=0.15,atrim=0:${totalDuration}[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=0[aout]" ` +
+      `-map "[aout]" -t ${totalDuration} "${outPath}"`,
+    { stdio: "inherit" }
+  );
+}
+
+function buildSrt(cues, outPath) {
+  const lines = cues
+    .map((cue, i) => {
+      const start = srtTimestamp(toSeconds(cue.start));
+      const end = srtTimestamp(toSeconds(cue.end));
+      return `${i + 1}\n${start} --> ${end}\n${cue[LANGUAGE]}\n`;
+    })
+    .join("\n");
+  fs.writeFileSync(outPath, lines, "utf8");
+}
+
+// Asks Gemini for a short social-media caption plus a set of hashtags,
+// using the video's hook line as context. Returns { caption, hashtags[] }.
+// Falls back to a generic caption if the call fails for any reason — this
+// is a nice-to-have, so it should never block the main pipeline.
+async function generateCaptionAndHashtags(ai, hookLine, language) {
+  const languageNote =
+    language === "burmese"
+      ? "Write the caption in natural, conversational Burmese."
+      : "Write the caption in natural, conversational English.";
+
+  const prompt = `
+This is a viral short-form movie recap video for TikTok/Instagram/YouTube Shorts.
+Its opening hook line is: "${hookLine}"
+
+Write:
+1. "caption": one short, punchy social media caption (1-2 sentences, no hashtags in it) that
+   would make someone want to watch. ${languageNote}
+2. "hashtags": an array of 10-15 relevant hashtags as plain strings starting with "#", no
+   spaces inside any tag, mixing broad discovery tags (like #fyp, #viral, #movierecap,
+   #moviesontiktok) with a few more specific tags related to this video's genre/mood.
+
+Return ONLY valid JSON, no markdown, no explanation, in this exact shape:
+{"caption":"...","hashtags":["#tag1","#tag2"]}
+`.trim();
+
+  try {
+    const result = await withRetry(() =>
+      ai.models.generateContent({
+        model: "gemini-3.5-flash-lite",
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: { responseMimeType: "application/json", maxOutputTokens: 1024 },
+      })
+    );
+    const text = result.text;
+    const parsed = JSON.parse(text.trim().replace(/^```json|```$/g, "").trim());
+    if (parsed.caption && Array.isArray(parsed.hashtags)) return parsed;
+    throw new Error("Unexpected caption response shape");
+  } catch (err) {
+    console.warn("Caption/hashtag generation failed, using a generic fallback:", err.message);
+    return {
+      caption: hookLine || "You won't believe what happens in this one...",
+      hashtags: ["#fyp", "#viral", "#movierecap", "#moviesontiktok", "#recap", "#shorts"],
+    };
+  }
+}
+
+// Recovers as many complete {...} objects as possible from a truncated JSON
+// array string like '[{"a":1},{"b":2},{"c":' by scanning brace depth and
+// dropping the last, incomplete object.
+function recoverJsonArray(rawText) {
+  const objects = [];
+  let depth = 0;
+  let startIdx = -1;
+  for (let i = 0; i < rawText.length; i++) {
+    const ch = rawText[i];
+    if (ch === "{") {
+      if (depth === 0) startIdx = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && startIdx !== -1) {
+        const candidate = rawText.slice(startIdx, i + 1);
+        try {
+          objects.push(JSON.parse(candidate));
+        } catch (_) {
+          // skip malformed object
+        }
+        startIdx = -1;
+      }
+    }
+  }
+  return objects;
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
