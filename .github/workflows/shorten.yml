@@ -34,7 +34,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install Myanmar font (for Burmese subtitles)
-        run: sudo apt-get install -y fonts-noto-core
+        run: |
+          sudo mkdir -p /usr/share/fonts/truetype/noto-myanmar
+          sudo curl -L -o /usr/share/fonts/truetype/noto-myanmar/NotoSansMyanmar-Regular.ttf \
+            https://raw.githubusercontent.com/frappe/fonts/master/usr_share_fonts/noto/NotoSansMyanmar-Regular.ttf
+          fc-cache -f
+          fc-list | grep -i myanmar || echo "WARNING: fontconfig did not pick up Noto Sans Myanmar"
 
       - name: Install dependencies
         run: npm install
@@ -69,4 +74,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: final-video
-          path: final_output.mp4
+          path: |
+            final_output.mp4
+            caption.txt
+            captions.srt
