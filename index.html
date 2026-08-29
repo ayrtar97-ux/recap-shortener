@@ -239,6 +239,48 @@
 
   .hidden { display: none !important; }
 
+  #history-panel .history-clear {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--gold-dim);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .history-row {
+    border-top: 1px solid var(--line);
+    padding: 12px 0;
+    font-size: 13px;
+  }
+  .history-row:first-child { border-top: none; padding-top: 0; }
+  .history-top {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  .history-caption {
+    color: var(--text);
+    margin-bottom: 6px;
+    line-height: 1.4;
+  }
+  .history-actions {
+    display: flex;
+    gap: 16px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .history-actions a {
+    color: var(--gold);
+    text-decoration: none;
+  }
+  .history-reuse {
+    color: var(--gold-dim);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
   /* ---- Decorative login screen (no real backend/security — cosmetic only) ---- */
   #login-screen {
     position: fixed;
@@ -418,6 +460,16 @@
 
     <button class="hidden" id="reset-btn" style="background:var(--bg-field);color:var(--text-dim);margin-top:10px;">Start another</button>
 
+    <!-- History panel -->
+    <div class="panel" id="history-panel">
+      <div class="status-row">
+        <div class="panel-title" style="margin:0">History</div>
+        <div class="history-clear" id="history-clear">Clear</div>
+      </div>
+      <div id="history-empty" class="hint">No runs yet — your finished cuts will show up here.</div>
+      <div id="history-list"></div>
+    </div>
+
     <footer>
       Triggers .github/workflows/shorten.yml via the GitHub Actions API.<br/>
       Nothing here touches a third-party server — only GitHub's own API.
@@ -471,6 +523,74 @@ profileSignout.addEventListener("click", () => {
   $("login-password").value = "";
   loginScreen.classList.remove("hidden");
 });
+
+// ---- Run history (saved locally in this browser — metadata only, not the
+// video itself, since videos are far too large for browser storage. The
+// GitHub Actions run link lets you re-open that run's Artifacts tab to
+// re-download the file directly, within GitHub's ~90-day retention window). ----
+const HISTORY_KEY = "recap_history";
+const HISTORY_LIMIT = 30;
+
+function loadHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveHistoryEntry(entry) {
+  const history = loadHistory();
+  history.unshift(entry);
+  if (history.length > HISTORY_LIMIT) history.length = HISTORY_LIMIT;
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+}
+
+function clearHistory() {
+  localStorage.removeItem(HISTORY_KEY);
+  renderHistory();
+}
+
+function renderHistory() {
+  const history = loadHistory();
+  const listEl = $("history-list");
+  const emptyEl = $("history-empty");
+  listEl.innerHTML = "";
+
+  if (history.length === 0) {
+    emptyEl.classList.remove("hidden");
+    return;
+  }
+  emptyEl.classList.add("hidden");
+
+  history.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "history-row";
+    const when = new Date(entry.date).toLocaleString([], {
+      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    });
+    row.innerHTML = `
+      <div class="history-top">
+        <span class="history-date">${when}</span>
+        <span class="history-voice">${entry.voice}</span>
+      </div>
+      <div class="history-caption">${(entry.caption || "").slice(0, 70)}</div>
+      <div class="history-actions">
+        <a href="${entry.runUrl}" target="_blank" rel="noopener">Open run #${entry.runNumber}</a>
+        <span class="history-reuse" data-drive="${entry.driveId}">Reuse Drive ID</span>
+      </div>
+    `;
+    listEl.appendChild(row);
+  });
+
+  listEl.querySelectorAll(".history-reuse").forEach((el) => {
+    el.addEventListener("click", () => {
+      $("driveId").value = el.dataset.drive;
+      $("advanced-fields").classList.contains("hidden") || null; // no-op, keeps field visible if already open
+      logLine(`Drive ID reused from history: ${el.dataset.drive}`);
+    });
+  });
+}
 
 const setupPanel = $("setup-panel");
 const advancedToggle = $("advanced-toggle");
@@ -662,6 +782,16 @@ async function startRun() {
   setBadge("done", "success");
   logLine("Ready.");
 
+  saveHistoryEntry({
+    date: new Date().toISOString(),
+    driveId: $("driveId").value.trim(),
+    voice: $("voiceSelect").value,
+    caption: captionText.split("\n")[0] || "",
+    runUrl: run.html_url,
+    runNumber: run.run_number,
+  });
+  renderHistory();
+
   $("result-video").src = videoUrl;
   const downloadLink = $("download-link");
   const downloadFilename = videoFileName || "final_output.mp4";
@@ -669,4 +799,63 @@ async function startRun() {
   async function performDownload() {
     if (window.AndroidDownloader) {
       // Running inside the APK's WebView — blob: downloads don't work natively,
-      // so hand the file to Android to save into the Downlo
+      // so hand the file to Android to save into the Downloads folder directly.
+      logLine("Saving to Downloads...");
+      const base64 = await getVideoBase64();
+      window.AndroidDownloader.saveVideo(base64, downloadFilename);
+    } else {
+      // Regular browser — trigger the anchor's native blob download.
+      downloadLink.href = videoUrl;
+      downloadLink.download = downloadFilename;
+      downloadLink.click();
+    }
+  }
+
+  // Manual re-download button, in case the automatic one below gets blocked
+  // by the browser or the person wants to save it again.
+  downloadLink.onclick = (e) => {
+    e.preventDefault();
+    performDownload();
+  };
+
+  // Auto-start the download the moment the video is ready — no extra tap needed.
+  performDownload();
+  logLine("Download started automatically.");
+
+  progressPanel.classList.add("hidden");
+  resultPanel.classList.remove("hidden");
+  resetBtn.classList.remove("hidden");
+  startBtn.disabled = false;
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+startBtn.addEventListener("click", startRun);
+$("copy-caption-btn").addEventListener("click", async () => {
+  const text = $("caption-text").value;
+  try {
+    await navigator.clipboard.writeText(text);
+    logLine("Caption copied.");
+  } catch (_) {
+    $("caption-text").select();
+    document.execCommand("copy");
+  }
+});
+
+resetBtn.addEventListener("click", () => {
+  resultPanel.classList.add("hidden");
+  progressPanel.classList.add("hidden");
+  resetBtn.classList.add("hidden");
+  setupPanel.classList.remove("hidden");
+});
+
+$("history-clear").addEventListener("click", () => {
+  if (confirm("Clear saved run history? (This doesn't delete anything on GitHub.)")) {
+    clearHistory();
+  }
+});
+
+renderHistory();
+</script>
+</body>
+</html>
